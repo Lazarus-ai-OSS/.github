@@ -1,0 +1,10 @@
+# Validates .lazarus/asset.yml against the repository metadata standard.
+
+name: Validate Asset Manifest
+
+on:
+  pull_request:
+
+jobs:
+  validate:
+    uses: lazarus-internal/lazarus-github-workflows/.github/workflows/reusable-validate-asset-manifest.yml@v1
