@@ -1,10 +1,110 @@
 # Validates .lazarus/asset.yml against the repository metadata standard.
+# Self-contained for OSS — no cross-org workflow references.
 
 name: Validate Asset Manifest
 
 on:
   pull_request:
 
+concurrency:
+  group: asset-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
-    uses: lazarus-internal/lazarus-github-workflows/.github/workflows/reusable-validate-asset-manifest.yml@v1
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          sparse-checkout: .lazarus
+
+      - name: Check manifest exists
+        id: manifest
+        run: |
+          if [ -f .lazarus/asset.yml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::.lazarus/asset.yml is missing."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up uv
+        if: steps.manifest.outputs.exists == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Checkout schema
+        if: steps.manifest.outputs.exists == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          repository: Lazarus-ai-OSS/.github
+          path: _schema_repo
+          sparse-checkout: .github/schemas
+
+      - name: Validate against schema
+        if: steps.manifest.outputs.exists == 'true'
+        run: uvx check-jsonschema --schemafile "_schema_repo/.github/schemas/asset-manifest.schema.yml" ".lazarus/asset.yml"
+
+      - name: Verify field order
+        if: steps.manifest.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          canonical="schema component product_or_domain type owner deployments"
+          actual_keys=$(grep -E '^[a-z_]+:' .lazarus/asset.yml | sed 's/:.*//' | sed 's/^product$/product_or_domain/' | sed 's/^domain$/product_or_domain/')
+          actual_order=""
+          for key in $actual_keys; do
+            for canon in $canonical; do
+              if [ "$key" = "$canon" ]; then
+                actual_order="${actual_order:+$actual_order }$key"
+                break
+              fi
+            done
+          done
+          expected_order=""
+          for canon in $canonical; do
+            for key in $actual_order; do
+              if [ "$canon" = "$key" ]; then
+                expected_order="${expected_order:+$expected_order }$canon"
+                break
+              fi
+            done
+          done
+          if [ "$actual_order" != "$expected_order" ]; then
+            echo "::error::Field order must follow: $canonical"
+            exit 1
+          fi
+          echo "::notice::Field order OK: $actual_order"
+
+      - name: Verify type matches repo name suffix
+        if: steps.manifest.outputs.exists == 'true'
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          valid_types="cli data evals img infra lib sdk svc ui"
+          if [[ "$REPO_NAME" != *-* ]]; then
+            echo "::notice::Repo name has no hyphen - suffix check skipped"
+            exit 0
+          fi
+          suffix="${REPO_NAME##*-}"
+          is_type=false
+          for t in $valid_types; do
+            if [ "$suffix" = "$t" ]; then
+              is_type=true
+              break
+            fi
+          done
+          if [ "$is_type" = false ]; then
+            echo "::notice::Repo suffix '-$suffix' is not a type token - suffix check skipped"
+            exit 0
+          fi
+          declared_type=$(uvx yq -r '.type' .lazarus/asset.yml)
+          if [ "$declared_type" != "$suffix" ]; then
+            echo "::error::type '$declared_type' does not match repo name suffix '-$suffix'"
+            exit 1
+          fi
+          echo "::notice::Type suffix match OK: $declared_type = -$suffix"

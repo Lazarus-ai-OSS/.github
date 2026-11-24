@@ -1,0 +1,57 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: ".lazarus/asset.yml"
+description: Repository metadata manifest.
+
+type: object
+required: [schema, type, owner, deployments]
+additionalProperties: false
+
+oneOf:
+  - required: [product]
+  - required: [domain]
+
+properties:
+
+  schema:
+    const: v1
+
+  component:
+    type: string
+    minLength: 1
+
+  product:
+    enum:
+      - clearwing
+      - sovereign
+
+  domain:
+    type: string
+    minLength: 1
+
+  type:
+    enum:
+      - cli
+      - data
+      - evals
+      - img
+      - infra
+      - lib
+      - sdk
+      - svc
+      - ui
+
+  owner:
+    type: object
+    required: [jira_project, team]
+    additionalProperties: false
+    properties:
+      jira_project:
+        type: string
+        minLength: 1
+      team:
+        type: string
+        minLength: 1
+
+  deployments:
+    type: array
+    maxItems: 0
